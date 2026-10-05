@@ -1,5 +1,6 @@
 #!/bin/sh
-# Inject the Chinese translator into every installed t3code WSL runtime.
+# Inject the Chinese translator into every installed t3code WSL runtime (web /
+# in-app browser) and into the Windows desktop client's server.asar.
 #
 # Idempotent: safe to run any number of times. Runs from the systemd path unit
 # whenever ~/.t3/wsl-runtime changes (i.e. after every T3 update).
@@ -12,6 +13,19 @@ RUNTIME_SRC="$HERE/runtime"
 RUNTIME_PARENT="${T3ZH_RUNTIME_PARENT:-$HOME/.t3/wsl-runtime}"
 MARK='data-t3zh-inject'
 TAG='<script src="/t3zh/dict.js" data-t3zh-inject></script><script src="/t3zh/t3zh.js" data-t3zh-inject></script>'
+
+NODE="${T3ZH_NODE:-$(command -v node || true)}"
+
+# Windows desktop client: its window loads the UI from server.asar, not WSL.
+if [ -n "$NODE" ]; then
+  if [ "${1:-}" = "--remove" ]; then
+    "$NODE" "$HERE/tools/patch-asar.mjs" --remove || true
+  else
+    "$NODE" "$HERE/tools/patch-asar.mjs" || true
+  fi
+else
+  echo "node not found; skipped the Windows desktop client" >&2
+fi
 
 [ -d "$RUNTIME_PARENT" ] || exit 0
 

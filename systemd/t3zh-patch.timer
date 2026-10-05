@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically re-check the t3code Chinese UI patch (covers Windows app updates)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Unit=t3zh-patch.service
+
+[Install]
+WantedBy=timers.target
