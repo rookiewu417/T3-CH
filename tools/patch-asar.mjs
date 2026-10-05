@@ -25,13 +25,14 @@ const explicit = args.filter((a) => !a.startsWith("--"));
 const BEGIN = "<!--t3zh-begin-->";
 const END = "<!--t3zh-end-->";
 const INDEX_PATH = ["apps", "server", "dist", "client", "index.html"];
+const MAIN_PATH = ["apps", "desktop", "dist-electron", "main.cjs"];
 
 function findInstalls() {
   const users = "/mnt/c/Users";
   if (!fs.existsSync(users)) return [];
   return fs
     .readdirSync(users)
-    .map((u) => path.join(users, u, "AppData/Local/Programs/t3code/resources/server.asar"))
+    .flatMap((u) => ["server.asar", "app.asar"].map((name) => path.join(users, u, "AppData/Local/Programs/t3code/resources", name)))
     .filter((p) => {
       try {
         return fs.statSync(p).isFile();
@@ -52,13 +53,13 @@ function readHeader(fd) {
   return { header: JSON.parse(json.toString("utf8")), jsonLength, dataStart: 8 + headerPickleSize };
 }
 
-function entryFor(header) {
+function entryFor(header, entryPath) {
   let node = header;
-  for (const part of INDEX_PATH) {
+  for (const part of entryPath) {
     node = node.files?.[part];
-    if (!node) throw new Error(`asar has no ${INDEX_PATH.join("/")}`);
+    if (!node) throw new Error(`asar has no ${entryPath.join("/")}`);
   }
-  if (node.unpacked) throw new Error("index.html is unpacked; unsupported");
+  if (node.unpacked) throw new Error("target entry is unpacked; unsupported");
   return node;
 }
 
@@ -67,6 +68,28 @@ function injection() {
   const dict = fs.readFileSync(path.join(root, "runtime/dict.js"), "utf8");
   const engine = fs.readFileSync(path.join(root, "runtime/t3zh.js"), "utf8");
   return `${BEGIN}<script>${safe(dict)}</script><script>${safe(engine)}</script>${END}`;
+}
+
+function patchNativeMenu(source) {
+  const replacements = [
+    ["electron.Menu.buildFromTemplate([...input.template])", "electron.Menu.buildFromTemplate(__t3zhNativeMenu([...input.template], false))"],
+    ["electron.Menu.buildFromTemplate(buildTemplate(normalizedItems, complete))", "electron.Menu.buildFromTemplate(__t3zhNativeMenu(buildTemplate(normalizedItems, complete)))"],
+    ['label: "No suggestions"', 'label: "无拼写建议"'],
+    ['label: "Copy Link"', 'label: "复制链接"'],
+    ['label: "Copy Image"', 'label: "复制图片"'],
+  ];
+  // Refuse an unfamiliar bundle before writing any bytes to the archive.
+  for (const [from, to] of replacements) {
+    if (source.split(from).length !== 2) throw new Error(`unsupported native menu bundle: expected one ${from}`);
+    source = source.replace(from, to);
+  }
+  const dictSource = fs.readFileSync(path.join(root, "runtime/dict.js"), "utf8");
+  const dict = JSON.parse(dictSource.slice(dictSource.indexOf(" = ") + 3).trim().replace(/;$/, ""));
+  const helper = fs.readFileSync(path.join(root, "runtime/native-menu.cjs"), "utf8").replace("module.exports = { createT3zhNativeMenu };", "");
+  // Initialize at module scope, never at a nested function's strict directive.
+  const prelude = `${helper}\nconst __t3zhNativeMenu = createT3zhNativeMenu(${JSON.stringify(dict)});\n`;
+  const directive = /^(\s*["']use strict["'];)/;
+  return directive.test(source) ? source.replace(directive, (match) => `${match}\n${prelude}`) : prelude + source;
 }
 
 function t3Running() {
@@ -83,7 +106,8 @@ function patch(asarPath) {
   const fd = fs.openSync(asarPath, "r+");
   try {
     const { header, jsonLength, dataStart } = readHeader(fd);
-    const entry = entryFor(header);
+    const native = path.basename(asarPath) === "app.asar";
+    const entry = entryFor(header, native ? MAIN_PATH : INDEX_PATH);
     const read = (offset, size) => {
       const buf = Buffer.alloc(size);
       fs.readSync(fd, buf, 0, size, dataStart + Number(offset));
@@ -102,9 +126,9 @@ function patch(asarPath) {
       if (!entry.t3zhOriginal) return "not patched";
       next = { offset: orig.offset, size: orig.size };
     } else {
-      const block = injection();
+      const block = native ? null : injection();
       // Classic inline scripts run before React's deferred module script.
-      const html = /<meta charset[^>]*>/i.test(originalHtml)
+      const html = native ? patchNativeMenu(originalHtml) : /<meta charset[^>]*>/i.test(originalHtml)
         ? originalHtml.replace(/(<meta charset[^>]*>)/i, `$1${block}`)
         : originalHtml.replace(/<head>/i, `<head>${block}`);
       if (entry.t3zhOriginal && html === currentHtml) return "up to date";
