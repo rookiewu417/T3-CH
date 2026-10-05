@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch t3code WSL runtimes and re-apply the Chinese UI patch
+
+[Path]
+PathChanged=%h/.t3/wsl-runtime
+MakeDirectory=yes
+Unit=t3zh-patch.service
+
+[Install]
+WantedBy=default.target

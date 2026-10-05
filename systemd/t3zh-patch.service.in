@@ -1,0 +1,6 @@
+[Unit]
+Description=Apply the Chinese UI patch to t3code WSL runtimes
+
+[Service]
+Type=oneshot
+ExecStart=@ROOT@/scripts/patch-runtime.sh
